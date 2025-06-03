@@ -1,0 +1,7 @@
+*.mod
+*.sum
+*.env
+*.toml
+
+media/
+# Ignore all files in the media directory
