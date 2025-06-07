@@ -17,6 +17,14 @@ func ListMedia(c *gin.Context) {
 		if err != nil {
 			return nil
 		}
+		// Skip the entire thumbnails folder
+		if d.IsDir() && strings.HasPrefix(path, filepath.Join(mediaDir, "thumbnails")) {
+			return filepath.SkipDir
+		}
+		// Skip the entire subtitles folder
+		if d.IsDir() && strings.HasPrefix(path, filepath.Join(mediaDir, "subtitles")) {
+			return filepath.SkipDir
+		}
 		if d.IsDir() {
 			return nil
 		}

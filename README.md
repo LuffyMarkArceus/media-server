@@ -1,4 +1,4 @@
-# 🎬 Media Server - Gin/Go + React
+# 🎬 Media Server - Gin/Go
 
 A lightweight media file server written in Go using the Gin web framework.  
 Supports browsing, uploading, downloading media files, and generating thumbnails via `ffmpeg`.
@@ -63,16 +63,3 @@ go run main.go
 - [ ] API documentation (Swagger or Postman collection).
 
 - [ ] Dockerize the app.
-
-### UI Tasks - React Frontend
-
-- [ ] Set up React project with Vite.
-- [ ] Create a simple Landing page.
-- [ ] Create DB Schema for media files
-- [ ] Set up DB and data model.
-- [ ] Move folder open state to URL.
-- [ ] Add Auth.
-- [ ] Add file uploading.
-- [ ] Provide option to view and download video files.
-- [ ] Make a video player UI to view the files.
-- [ ] Add a search bar to search for media files.

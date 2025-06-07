@@ -34,7 +34,7 @@ func GetThumbnail(c *gin.Context) {
 		return
 	}
 
-	err = exec.Command("ffmpeg", "-i", videoPath, "-ss", "00:00:01", "-vframes", "1", thumbPath).Run()
+	err = exec.Command("ffmpeg", "-i", videoPath, "-ss", "00:00:01", "-vframes", "1", "-vf", "scale=320:-1", thumbPath).Run()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create thumbnail for %s", relPath)})
 		return
