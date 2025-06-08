@@ -17,7 +17,7 @@ func setupRouter() *gin.Engine {
 	r.GET("/user/:name", handlers.GetUser)
 	r.POST("/upload", handlers.UploadFiles)
 	r.GET("/media", handlers.ListMedia)
-	r.GET("/media/*filepath", handlers.ServeMedia)
+	r.GET("/media_stream", handlers.ServeMedia)
 	r.GET("/thumbnail/*filepath", handlers.GetThumbnail)
 	r.GET("/subtitle/*filepath", handlers.GetSubtitles)
 

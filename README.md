@@ -35,31 +35,20 @@ go run main.go
 ### Backend Tasks - Gin Go Server
 
 - [x] Set up Gin project.
-
 - [x] File upload via /upload.
-
 - [x] List all media files under /media.
-
 - [x] Serve files via /media/\*filepath.
-
 - [x] Generate thumbnails using ffmpeg.
-
 - [x] Support nested folder structure in /thumbnail/\*filepath.
 
-- [ ] Add logging middleware or structured logs.
-
-- [ ] Add unit tests for handlers.
-
-- [ ] Add JWT-based authentication.
-
-- [ ] Pagination support for /media.
+- [x] Config file support (e.g., media root path, port).
+- [x] Use SQLite or other persistent DB instead of in-memory map.
 
 - [ ] Delete media API.
 
-- [ ] Config file support (e.g., media root path, port).
-
-- [ ] Use SQLite or other persistent DB instead of in-memory map.
-
+- [ ] Add logging middleware or structured logs.
+- [ ] Add unit tests for handlers.
+- [ ] Add JWT-based authentication.
+- [ ] Pagination support for /media.
 - [ ] API documentation (Swagger or Postman collection).
-
 - [ ] Dockerize the app.
