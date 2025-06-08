@@ -1,7 +1,7 @@
 # 🎬 Media Server - Gin/Go
 
 A lightweight media file server written in Go using the Gin web framework.  
-Supports browsing, uploading, downloading media files, and generating thumbnails via `ffmpeg`.
+Supports browsing, uploading, downloading media files, and generating thumbnails & subtitles (if any) via `ffmpeg`.
 
 ---
 
@@ -41,10 +41,12 @@ go run main.go
 - [x] Generate thumbnails using ffmpeg.
 - [x] Support nested folder structure in /thumbnail/\*filepath.
 
-- [x] Config file support (e.g., media root path, port).
+- [x] Config file support, .env (e.g., media root path, port).
 - [x] Use SQLite or other persistent DB instead of in-memory map.
 
-- [ ] Delete media API.
+- [ ] Delete media route.
+- [ ] Rename media route.
+- [ ] Upload media route.
 
 - [ ] Add logging middleware or structured logs.
 - [ ] Add unit tests for handlers.

@@ -61,6 +61,7 @@ func ListMedia(c *gin.Context) {
 				"size": info.Size(),
 				"path": fullRelativePath, // Use the full relative path for media operations
 				"type": filepath.Ext(entry.Name()),
+				"created_at"  : info.ModTime(),
 			})
 		}
 	}
@@ -70,46 +71,6 @@ func ListMedia(c *gin.Context) {
 		"files" : files,
 	})
 
-	// err := filepath.WalkDir(mediaDir, func(path string, d os.DirEntry, err error) error {
-	// 	if err != nil {
-	// 		return nil
-	// 	}
-	// 	// Skip the entire thumbnails folder
-	// 	if d.IsDir() && strings.HasPrefix(path, filepath.Join(mediaDir, "thumbnails")) {
-	// 		return filepath.SkipDir
-	// 	}
-	// 	// Skip the entire subtitles folder
-	// 	if d.IsDir() && strings.HasPrefix(path, filepath.Join(mediaDir, "subtitles")) {
-	// 		return filepath.SkipDir
-	// 	}
-	// 	if d.IsDir() {
-	// 		return nil
-	// 	}
-	// 	info, err := d.Info()
-	// 	if err != nil {
-	// 		return nil
-	// 	}
-
-	// 	relPath, err := filepath.Rel(mediaDir, path)
-	// 	if err != nil {
-	// 		relPath = path
-	// 	}
-
-	// 	fileList = append(fileList, gin.H{
-	// 		"name": d.Name(),
-	// 		"size": info.Size(),
-	// 		"path": relPath,
-	// 		"type": filepath.Ext(d.Name()),
-	// 	})
-	// 	return nil
-	// })
-
-	// if err != nil {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to scan media directory"})
-	// 	return
-	// }
-
-	// c.JSON(http.StatusOK, fileList)
 }
 
 func ServeMedia(c *gin.Context) {
