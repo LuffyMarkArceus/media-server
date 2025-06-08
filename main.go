@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"media-server/config"  // Import config package
 	"media-server/storage" // Import storage (where InitDB is)
@@ -23,5 +24,5 @@ func main() {
 	log.Printf("Media Root Directory: %s", config.MediaRoot)
 
 	r := setupRouter()
-	r.Run("localhost:8080")
+	r.Run(fmt.Sprintf("localhost:%v", config.AppPort))
 }

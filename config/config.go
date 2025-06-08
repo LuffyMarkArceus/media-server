@@ -9,6 +9,7 @@ import (
 )
 
 var MediaRoot string
+var AppPort string
 
 func init() {
 	err := godotenv.Load()
@@ -19,6 +20,7 @@ func init() {
 	}
 
 	MediaRoot = os.Getenv("MEDIA_ROOT")
+	AppPort = os.Getenv("APP_PORT")
 	log.Printf("MEDIA ROOT : %v", MediaRoot)
 	if MediaRoot == "" {
 		// Provide a sensible default or log a warning if MEDIA_ROOT is not set
