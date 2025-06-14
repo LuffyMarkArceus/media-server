@@ -98,7 +98,7 @@ func ListMedia(c *gin.Context) {
 		log.Printf("Error iterating files: %v", err)
 	}
 	log.Printf("Returning %d folders and %d files for path %s", len(folders), len(files), subPath)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"folders" : folders,
 		"files" : files,
@@ -106,51 +106,68 @@ func ListMedia(c *gin.Context) {
 }
 
 func ServeMedia(c *gin.Context) {
-	rawPath := c.Query("path")
-	if rawPath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error" : "Missing Path"})
+	if db == nil {
+		log.Println("Database is nil")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database not initialized"})
 		return
 	}
 
-	// Normalize and clean the path
-	relPath := filepath.FromSlash(rawPath)
-	relPath = filepath.Clean(relPath)
-
-	if strings.HasPrefix(relPath, ".") || strings.HasPrefix(relPath, string(filepath.Separator)+"..") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path for security reasons"})
+	path := c.Query("path")
+	if path == "" || strings.Contains(path, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
+	log.Printf("Serving media for path: %s", path)
 
 	// Verify File Exists in DB
-	url := fmt.Sprintf("http://localhost:%v/media_stream?path=%s", config.AppPort, rawPath)
-	var fileID int64
-	err := db.QueryRow("SELECT id FROM files_table WHERE url = ?").Scan(&fileID)
+	url := fmt.Sprintf("http://localhost:%v/media_stream?path=%s", config.AppPort, path)
+
+	var filePath string
+	var fileSize int64
+	err := db.QueryRow("SELECT name, size FROM files_table WHERE url = ?", url).Scan(&filePath, &fileSize)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			log.Printf("File not found for URL: %s", url)
 			c.JSON(http.StatusNotFound, gin.H{"error": "File not found in database"})
 		} else {
 			log.Printf("Error querying file %s: %v", url, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not access file"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to Query file"})
 		}
 		return
 	}
 
 	// Server file from filesystem
-	fullPath := filepath.Join(config.MediaRoot, relPath)
-	info, err := os.Stat(fullPath)
+	absPath := filepath.Join(config.MediaRoot, path)
+	log.Printf("Resolved filesystem path: %s", absPath)
+
+	info, err := os.Stat(absPath)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"error": "File not found in database"})
-		} else {
-			log.Printf("Error querying file %s: %v", url, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not access file"})
-		}
+		log.Printf("Error accessing file %s: %v", absPath, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found on filesystem"})
 		return
 	}
+
+	// Open the file
+	file, err := os.Open(absPath)
+	if err != nil {
+		log.Printf("Error opening file %s: %v", absPath, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
+		return
+	}
+	defer file.Close()
+
+	// Set headers
+	c.Header("Content-Type", "video/mp4") // Adjust based on file type
+	c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
+	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", info.Name()))
+
+
 	if info.IsDir() {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Path is a directory"})
 		return
 	}
 
-	c.File(fullPath)
+	// Stream the file
+	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), file)
+	log.Printf("Served media file: %s", absPath)
 }

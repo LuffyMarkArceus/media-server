@@ -99,6 +99,7 @@ func SyncFiles(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("error walking filesystem: %w", err)
 	}
+	log.Printf("Walked System, ran SyncFiles successfully..")
 	return nil
 
 }
