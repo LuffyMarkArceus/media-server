@@ -42,10 +42,10 @@ go run main.go
 - [x] Support nested folder structure in /thumbnail/\*filepath.
 - [-] Modify DB Schema for media files & folders
 - [x] Config file support, .env (e.g., media root path, port).
-- [x] Use SQLite or other persistent DB instead of in-memory map.
+- [ ] Use SQLite or other persistent DB instead of in-memory map.
 
 - [ ] Delete media route.
-- [ ] Rename media route.
+- [x] Rename media route.
 - [ ] Upload media route.
 
 - [ ] Add logging middleware or structured logs.
