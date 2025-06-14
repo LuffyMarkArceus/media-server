@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,6 +16,11 @@ import (
 )
 
 func GetSubtitles(c *gin.Context) {
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database not initialized"})
+		return
+	}
+
 	relPath := strings.TrimPrefix(c.Param("filepath"), "/")
 	relPath = filepath.Clean(relPath)
 
@@ -37,8 +43,22 @@ func GetSubtitles(c *gin.Context) {
 		return
 	}
 
+	// Verify video in DB
+	url := fmt.Sprintf("http://localhost:v/media_stream?path=%s", config.AppPort, relPath)
+	var fileID int64
+	err := db.QueryRow("SELECT id FROM files_tables WHERE url = ?",url).Scan(&fileID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Video not found in database"})
+		} else {
+			log.Printf("Error querying file %s: %v", url, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not access file"})
+		}
+		return
+	}
+
 	// Create subtitles directory if needed
-	err := os.MkdirAll(filepath.Dir(subtitlePath), os.ModePerm)
+	err = os.MkdirAll(filepath.Dir(subtitlePath), os.ModePerm)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create subtitles directory"})
 		return
