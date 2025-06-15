@@ -17,6 +17,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error Initializing database: %v", err)
 	}
+	
 	defer db.Close()
 
 	// Sync files from filesystem to database

@@ -64,7 +64,7 @@ func SyncFiles(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to ensure root folder : %w", err)
 	}
-
+	log.Printf("Started OS Walk")
 	err = filepath.Walk(config.MediaRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Printf("Error Accessing path %s : %v", path, err)
@@ -151,6 +151,9 @@ func insertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error)
 		"INSERT INTO folders_table (ownerId, name, path, parent, created_at) VALUES (?, ?, ?, ?, ?)",
 		"default_user", name, relPath, parentId, time.Now(),
 	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to Insert file : %v in files_table, err : %w", name, err)
+	}
 	return result.LastInsertId()
 } 
 
