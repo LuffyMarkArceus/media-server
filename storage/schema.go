@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS files_table (
     ownerId TEXT NOT NULL,
     name TEXT NOT NULL,
     size INTEGER NOT NULL,
-    url TEXT NOT NULL,
+    url TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     parent INTEGER NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS folders_table (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ownerId TEXT NOT NULL,
     name TEXT NOT NULL,
-    path TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE,
     parent INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_parent_folder

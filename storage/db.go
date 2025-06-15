@@ -65,6 +65,8 @@ func SyncFiles(db *sql.DB) error {
 		return fmt.Errorf("failed to ensure root folder : %w", err)
 	}
 	log.Printf("Started OS Walk")
+	processedPaths := make(map[string]bool) // TO avoid duplicates
+
 	err = filepath.Walk(config.MediaRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			log.Printf("Error Accessing path %s : %v", path, err)
@@ -73,28 +75,40 @@ func SyncFiles(db *sql.DB) error {
 		if path == config.MediaRoot{
 			return nil
 		}
-		if strings.HasPrefix(info.Name(), ".") ||
-			info.Name() == "thumbnails" ||
-			info.Name() == "subtitles"  ||
-			strings.HasSuffix(info.Name(), ".ini") ||
-			strings.HasSuffix(info.Name(), ".dat") ||
-			strings.HasSuffix(info.Name(), ".tmp") {
-				return nil
-		}
 		relPath, err := filepath.Rel(config.MediaRoot, path)
 		if err != nil {
 			log.Printf("Error getting relative path for %s: %v", path, err)
 			return nil
 		}
 		relPath = filepath.ToSlash(relPath)
+		
+		if strings.HasPrefix(info.Name(), ".") ||
+			strings.Contains(relPath, "thumbnails") ||
+			strings.Contains(relPath, "subtitles") ||
+			strings.HasSuffix(info.Name(), ".ini") ||
+			strings.HasSuffix(info.Name(), ".dat") ||
+			strings.HasSuffix(info.Name(), ".tmp") {
+				return nil
+		}
+
+		// Skip if already processed
+		if processedPaths[relPath] {
+			return nil    
+		}
 
 		if info.IsDir(){
 			_, err := insertFolder(db, relPath, rootFolderID)
-			return err
+			if err != nil {
+				return err
+			}
+		} else {
+			_, err = insertFile(db, relPath, info, rootFolderID)
+			if err != nil {
+				return err
+			}
 		}
-		_, err = insertFile(db, relPath, info, rootFolderID)
-		return err
-
+		processedPaths[relPath] = true
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("error walking filesystem: %w", err)
@@ -123,7 +137,8 @@ func ensureRootFolder(db *sql.DB) (int64, error) {
 
 func insertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error){
 	var folderID int64
-	err := db.QueryRow("SELECT id FROM folders_table WHERE path = ?", relPath).Scan(&folderID)
+	normalizedPath := filepath.ToSlash(relPath)
+	err := db.QueryRow("SELECT id FROM folders_table WHERE path = ?", normalizedPath).Scan(&folderID)
 	if err == nil {
 		return folderID, nil
 	}
@@ -132,7 +147,7 @@ func insertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error)
 	}
 
 	name := filepath.Base(relPath)
-	parentPath := filepath.Dir(relPath)
+	parentPath := filepath.ToSlash(filepath.Dir(relPath))
 
 	if parentPath == "." || parentPath == "/" {
 		parentPath = ""
@@ -159,7 +174,7 @@ func insertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error)
 
 func insertFile(db *sql.DB, relPath string, info os.FileInfo, rootFolderID int64) (int64, error) {
 	var fileID int64
-	url := fmt.Sprintf("http://localhost:%v/media_stream?path=%s", config.AppPort, relPath)
+	url := fmt.Sprintf("http://localhost:%v/media_stream?path=%s", config.AppPort, filepath.ToSlash(relPath))
 	err := db.QueryRow("SELECT id FROM files_table WHERE url = ?", url).Scan(&fileID)
 	if err == nil {
 		return fileID, nil
@@ -168,7 +183,7 @@ func insertFile(db *sql.DB, relPath string, info os.FileInfo, rootFolderID int64
 		return 0, fmt.Errorf("error checking file %s: %w", relPath, err)
 	}
 
-	parentPath := filepath.Dir(relPath)
+	parentPath := filepath.ToSlash(filepath.Dir(relPath))
 	if parentPath == "." || parentPath == "/" {
 		parentPath = ""
 	}

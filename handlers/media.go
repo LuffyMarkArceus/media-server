@@ -33,7 +33,7 @@ func ListMedia(c *gin.Context) {
 		return
 	}
 
-	subPath = filepath.Clean(subPath)
+	subPath = filepath.ToSlash(filepath.Clean(subPath))
 	if subPath == "." || subPath == string(filepath.Separator){
 		subPath = ""
 	}
