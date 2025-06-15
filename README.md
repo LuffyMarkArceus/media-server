@@ -60,4 +60,4 @@ go run main.go
 - [ ] Return video duration from ffprobe or ffmpeg during upload/scan.
 - [ ]
 - [ ] Use Range header support with c.FileFromFS() or http.ServeContent for efficient streaming.
-- [ ] Add /healthz and /metrics endpoints for monitoring.
+- [-] Add /healthz and /metrics endpoints for monitoring.
