@@ -40,9 +40,9 @@ go run main.go
 - [x] Serve files via /media/\*filepath.
 - [x] Generate thumbnails using ffmpeg.
 - [x] Support nested folder structure in /thumbnail/\*filepath.
-- [-] Modify DB Schema for media files & folders
+- [x] Modify DB Schema for media files & folders
 - [x] Config file support, .env (e.g., media root path, port).
-- [ ] Use SQLite or other persistent DB instead of in-memory map.
+- [x] Use SQLite or other persistent DB instead of in-memory map.
 
 - [ ] Delete media route.
 - [x] Rename media route.
@@ -54,3 +54,10 @@ go run main.go
 - [ ] Pagination support for /media.
 - [ ] API documentation (Swagger or Postman collection).
 - [ ] Dockerize the app.
+
+### BONUS Ideas
+
+- [ ] Return video duration from ffprobe or ffmpeg during upload/scan.
+- [ ]
+- [ ] Use Range header support with c.FileFromFS() or http.ServeContent for efficient streaming.
+- [ ] Add /healthz and /metrics endpoints for monitoring.
