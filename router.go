@@ -20,6 +20,7 @@ func setupRouter() *gin.Engine {
 	r.GET("/thumbnail/*filepath", handlers.GetThumbnail)
 	r.GET("/user/:name", handlers.GetUser)
 
+	r.GET("/hls", handlers.ServeHLS)
 	r.GET("/health", handlers.Health)
 
 	r.POST("/upload", handlers.UploadFiles)
