@@ -15,15 +15,15 @@ func setupRouter() *gin.Engine {
 
 	// r.GET("/ping", handlers.Ping)
 	r.GET("/media", handlers.ListMedia)
-	r.GET("/media_stream", handlers.ServeMedia)
-	r.GET("/subtitle/*filepath", handlers.GetSubtitles)
+	r.GET("/media_stream", handlers.ServeMedia) // This will now be a redirect handler
 	r.GET("/thumbnail/*filepath", handlers.GetThumbnail)
+	// r.GET("/subtitle/*filepath", handlers.GetSubtitles)
 	r.GET("/user/:name", handlers.GetUser)
 
 	r.GET("/health", handlers.Health)
 
 	r.POST("/upload", handlers.UploadFiles)
-	r.PUT("/rename", handlers.RenameFile)
+	// r.PUT("/rename", handlers.RenameFile)
 
 	return r
 }

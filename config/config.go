@@ -3,48 +3,79 @@ package config
 import (
 	"log"
 	"os"
-	"path/filepath" // Import for filepath.Clean
 	"strconv"
 
-	"github.com/joho/godotenv" // Import godotenv
+	"github.com/joho/godotenv"
 )
 
-var ( 
-	MediaRoot string 
-	AppPort int 
+var (
+	// --- App Configuration ---
+	AppPort int
+
+	// --- Database Configuration ---
+	DatabaseURL string
+
+	// --- Cloudflare R2 Configuration ---
+	CloudflareR2AccountID      string
+	CloudflareR2AccessKeyID    string
+	CloudflareR2SecretAccessKey string
+	CloudflareR2BucketName     string
+	CloudflarePublicDevURL     string
 )
 
 func Init() {
+	// Load values from .env file.
+	// It's okay if this file doesn't exist, especially in a production/container environment.
 	err := godotenv.Load()
 	if err != nil {
-		// It's okay if .env is not found in production, but log a warning
-		// if it's expected, or fatal if it's critical.
-		log.Printf("No .env file found, using default values: %v", err)
+		log.Println("Warning: No .env file found, relying on OS environment variables.")
 	}
 
-	// Get MEDIA_ROOT
-	MediaRoot = os.Getenv("MEDIA_ROOT")
-	if MediaRoot == "" {
-		log.Fatal("MEDIA_ROOT environment variable is not set")
-	}
-
-	// Resolve Absolute Path
-	absPath, err := filepath.Abs(MediaRoot)
-	if err != nil {
-		log.Fatalf("Error resolving MEDIA_ROOT path: %v", err)
-	}
-
-	// Get APP_PORT
+	// --- Load App Port ---
 	portStr := os.Getenv("APP_PORT")
 	if portStr == "" {
-		log.Printf("APP_PORT environment variable not set")
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		log.Fatalf("Invalid APP_PORT value: %v", err)
+		AppPort = 8080 // Default port
+		log.Printf("APP_PORT not set, using default value: %d", AppPort)
+	} else {
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			log.Fatalf("FATAL: Invalid APP_PORT value: '%s'. Must be an integer.", portStr)
+		}
+		AppPort = port
 	}
 
-	// Get config ready
-	MediaRoot = absPath
-	AppPort = port
+	// --- Load Database Configuration ---
+	DatabaseURL = os.Getenv("DATABASE_URL")
+	if DatabaseURL == "" {
+		log.Fatal("FATAL: DATABASE_URL environment variable is not set.")
+	}
+
+	// --- Load Cloudflare R2 Configuration ---
+	CloudflareR2AccountID = os.Getenv("CLOUDFLARE_R2_ACCOUNT_ID")
+	if CloudflareR2AccountID == "" {
+		log.Fatal("FATAL: CLOUDFLARE_R2_ACCOUNT_ID environment variable is not set.")
+	}
+
+	CloudflareR2AccessKeyID = os.Getenv("CLOUDFLARE_R2_ACCESS_KEY_ID")
+	if CloudflareR2AccessKeyID == "" {
+		log.Fatal("FATAL: CLOUDFLARE_R2_ACCESS_KEY_ID environment variable is not set.")
+	}
+
+	CloudflareR2SecretAccessKey = os.Getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY")
+	if CloudflareR2SecretAccessKey == "" {
+		log.Fatal("FATAL: CLOUDFLARE_R2_SECRET_ACCESS_KEY environment variable is not set.")
+	}
+
+	CloudflareR2BucketName = os.Getenv("CLOUDFLARE_R2_BUCKET_NAME")
+	if CloudflareR2BucketName == "" {
+		log.Fatal("FATAL: CLOUDFLARE_R2_BUCKET_NAME environment variable is not set.")
+	}
+	
+	CloudflarePublicDevURL = os.Getenv("CF_PUBLIC_DEV_URL")
+	if CloudflarePublicDevURL == "" {
+		log.Fatal("FATAL: CF_PUBLIC_DEV_URL environment variable is not set.")
+	}
+
+	// The MediaRoot variable has been removed as it's no longer needed.
+	log.Println("Configuration loaded successfully.")
 }

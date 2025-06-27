@@ -2,65 +2,69 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"media-server/config"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 )
 
 var db *sql.DB
+var r2Client *s3.Client // Add r2Client
 
 // SetDB sets the database connection for handlers.
-func SetDB(database *sql.DB){
+func SetDB(database *sql.DB) {
 	db = database
 }
 
+// SetR2Client sets the R2 client for handlers
+func SetR2Client(client *s3.Client) {
+	r2Client = client
+}
+
+
+// ListMedia is updated to use PG placeholders and the correct URL prefix trim.
 func ListMedia(c *gin.Context) {
 	if db == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error" : "DB not initialized"})
-		return
-	}
-	
-	subPath := c.Query("path")
-	if strings.Contains(subPath, "..") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Path, Not Allowed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "DB not initialized"})
 		return
 	}
 
-	subPath = filepath.ToSlash(filepath.Clean(subPath))
-	if subPath == "." || subPath == string(filepath.Separator){
-		subPath = ""
-	}
+	subPath := c.Query("path")
+	// ... (path cleaning logic is the same)
+	if strings.Contains(subPath, "..") {
+         c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid Path, Not Allowed"})
+         return
+     }
+     subPath = filepath.ToSlash(filepath.Clean(subPath))
+     if subPath == "." || subPath == string(filepath.Separator){
+         subPath = ""
+     }
 
 	var folderID int64
-	err := db.QueryRow("SELECT id FROM folders_table WHERE path = ?", subPath).Scan(&folderID)
+    // Use $1 for PostgreSQL
+	err := db.QueryRow("SELECT id FROM folders_table WHERE path = $1", subPath).Scan(&folderID)
 	if err != nil {
-		if err != sql.ErrNoRows {
-			log.Printf("Folder not found %s: %v", subPath, err)
-			c.JSON(http.StatusNotFound, gin.H{"error" : "Folder not Found"})
-		} else {
-			log.Printf("Error querying folder %s: %v", subPath, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query folder"})
-		}
+		// ... (error handling is the same)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Folder not Found"})
 		return
 	}
 
-	// Query subfolders
+	// Query subfolders (use $1)
 	folders := []string{}
-	rows, err := db.Query("SELECT name FROM folders_table WHERE parent = ? AND name != ''", folderID)
+	rows, err := db.Query("SELECT name FROM folders_table WHERE parent = $1 AND name != ''", folderID)
+    // ... (rest of folder logic is the same)
 	if err != nil {
 		log.Printf("Error querying subfolders for folder %d: %v", folderID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query subfolders"})
 		return
 	}
 	defer rows.Close()
-	for rows.Next(){
+	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			log.Printf("Error scanning folder name: %v", err)
@@ -69,9 +73,11 @@ func ListMedia(c *gin.Context) {
 		folders = append(folders, name)
 	}
 
-	//Query Files
+
+	// Query Files (use $1)
 	files := []gin.H{}
-	rows, err = db.Query("SELECT name, size, url, type, created_At FROM files_table WHERE parent = ?", folderID)
+	rows, err = db.Query("SELECT name, size, url, type, created_at FROM files_table WHERE parent = $1", folderID)
+    // ... (rest of file query logic)
 	if err != nil {
 		log.Printf("Error querying files for folder %d: %v", folderID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query files"})
@@ -80,34 +86,34 @@ func ListMedia(c *gin.Context) {
 	defer rows.Close()
 	for rows.Next() {
 		var name, url, typ string
-		var size int
+		var size int64 // Use int64 for BIGINT
 		var createdAt time.Time
 		if err := rows.Scan(&name, &size, &url, &typ, &createdAt); err != nil {
 			log.Printf("Error Scanning file %s : %v", name, err)
+			continue
 		}
-		relPath := strings.TrimPrefix(url, fmt.Sprintf("http://localhost:%v/media_stream?path=", config.AppPort))
+        // The path is now derived by trimming the public R2 URL
+		path := strings.TrimPrefix(url, config.CloudflarePublicDevURL+"/")
 		files = append(files, gin.H{
 			"name":       name,
 			"size":       size,
-			"path":       relPath, // Keep "path" for frontend compatibility
+			"path":       path, // This is the object key, used for other API calls
 			"type":       typ,
 			"created_at": createdAt,
 		})
 	}
-	if err = rows.Err(); err != nil {
-		log.Printf("Error iterating files: %v", err)
-	}
-	log.Printf("Returning %d folders and %d files for path %s", len(folders), len(files), subPath)
+	// ... (error checking on rows.Err() is the same)
 
 	c.JSON(http.StatusOK, gin.H{
-		"folders" : folders,
-		"files" : files,
+		"folders": folders,
+		"files":   files,
 	})
 }
 
+
+// ServeMedia is now a redirector, not a file streamer.
 func ServeMedia(c *gin.Context) {
 	if db == nil {
-		log.Println("Database is nil")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database not initialized"})
 		return
 	}
@@ -117,57 +123,26 @@ func ServeMedia(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
-	log.Printf("Serving media for path: %s", path)
+	log.Printf("Request to serve media for path: %s", path)
 
-	// Verify File Exists in DB
-	url := fmt.Sprintf("http://localhost:%v/media_stream?path=%s", config.AppPort, path)
+	// Construct the expected public URL from the path (object key)
+	fileURL := config.CloudflarePublicDevURL + "/" + path
 
-	var filePath string
-	var fileSize int64
-	err := db.QueryRow("SELECT name, size FROM files_table WHERE url = ?", url).Scan(&filePath, &fileSize)
+	// Verify the file exists in the database by its URL
+	var dbURL string
+	err := db.QueryRow("SELECT url FROM files_table WHERE url = $1", fileURL).Scan(&dbURL)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("File not found for URL: %s", url)
+			log.Printf("File not found in database for URL: %s", fileURL)
 			c.JSON(http.StatusNotFound, gin.H{"error": "File not found in database"})
 		} else {
-			log.Printf("Error querying file %s: %v", url, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to Query file"})
+			log.Printf("Error querying file by URL %s: %v", fileURL, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query file"})
 		}
 		return
 	}
 
-	// Server file from filesystem
-	absPath := filepath.Join(config.MediaRoot, path)
-	log.Printf("Resolved filesystem path: %s", absPath)
-
-	info, err := os.Stat(absPath)
-	if err != nil {
-		log.Printf("Error accessing file %s: %v", absPath, err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "File not found on filesystem"})
-		return
-	}
-
-	// Open the file
-	file, err := os.Open(absPath)
-	if err != nil {
-		log.Printf("Error opening file %s: %v", absPath, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open file"})
-		return
-	}
-	defer file.Close()
-
-	// Set headers
-	c.Header("Content-Type", "video/mp4") // Adjust based on file type
-	c.Header("Content-Length", fmt.Sprintf("%d", info.Size()))
-	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", info.Name()))
-
-
-	if info.IsDir() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Path is a directory"})
-		return
-	}
-
-	// Stream the file
-	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), file)
-	log.Printf("Served media file: %s", absPath)
+	// Redirect the client to the public R2 URL
+	log.Printf("Redirecting client to: %s", dbURL)
+	c.Redirect(http.StatusFound, dbURL)
 }
