@@ -3,35 +3,41 @@ package main
 import (
 	"fmt"
 	"log"
-	"media-server/config" // Import config package
-	"media-server/handlers"
-	"media-server/storage" // Import storage (where InitDB is)
+	"os"
+
+	"media-server/config"   // Loads env vars like MEDIA_ROOT, etc.
+	"media-server/handlers" // HTTP handlers
+	"media-server/storage"  // DB init + sync logic
 )
 
 func main() {
-	// Initialize configuration (e.g., MEDIA_ROOT from .env)
-	config.Init() 
+	// Load config from .env
+	config.Init()
 
-	// Initialize Database
-	db, err := storage.InitDB("./MediaServer.db")
-	if err != nil {
-		log.Fatalf("Error Initializing database: %v", err)
+	// Get NeonDB URL from environment
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL environment variable not set")
 	}
-	
+
+	// Initialize PostgreSQL database (NeonDB)
+	db, err := storage.InitDB(databaseURL)
+	if err != nil {
+		log.Fatalf("Error initializing database: %v", err)
+	}
 	defer db.Close()
 
-	// Sync files from filesystem to database
-	err = storage.SyncFiles(db)
-	if err != nil {
-		log.Fatalf("Error Syncing Files: %v", err)
+	// Sync local files to NeonDB
+	if err := storage.SyncFiles(db); err != nil {
+		log.Fatalf("Error syncing files: %v", err)
 	}
 
-	// Log the resolved MediaRoot for debugging
 	log.Printf("Media Root Directory: %s", config.MediaRoot)
 
-	// Pass database to handlers
+	// Pass database connection to handlers
 	handlers.SetDB(db)
 
+	// Start HTTP server
 	r := setupRouter()
 	r.Run(fmt.Sprintf("localhost:%v", config.AppPort))
 }
