@@ -17,7 +17,10 @@ func setupRouter() *gin.Engine {
 	r.GET("/media", handlers.ListMedia)
 	r.GET("/media_stream", handlers.ServeMedia) // This will now be a redirect handler
 	r.GET("/thumbnail/*filepath", handlers.GetThumbnail)
-	// r.GET("/subtitle/*filepath", handlers.GetSubtitles)
+
+	r.GET("/subtitle/*filepath", handlers.GetSubtitles)
+	r.GET("/proxy_subtitle/*filepath", handlers.ProxySubtitle)
+	
 	r.GET("/user/:name", handlers.GetUser)
 
 	r.GET("/health", handlers.Health)

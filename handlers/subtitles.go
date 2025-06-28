@@ -1,105 +1,153 @@
 package handlers
 
-// import (
-// 	"database/sql"
-// 	"fmt"
-// 	"log"
-// 	"net/http"
-// 	"os"
-// 	"os/exec"
-// 	"path/filepath"
-// 	"strings"
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"fmt"
+	"io"
+	"log"
+	"media-server/config"
+	"net/http"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
 
-// 	"media-server/config"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/gin-gonic/gin"
+)
 
-// 	"github.com/gin-gonic/gin"
-// )
+// DB stores full URLs with domain in the `url` column
+const dbHasFullURLs = true
 
-// func GetSubtitles(c *gin.Context) {
-// 	if db == nil {
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database not initialized"})
-// 		return
-// 	}
+func GetSubtitles(c *gin.Context) {
+	if db == nil || r2Client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Service not initialized"})
+		return
+	}
 
-// 	// Clean the filepath parameter
-// 	relPath := strings.TrimPrefix(c.Param("filepath"), "/")
-// 	relPath = filepath.ToSlash(filepath.Clean(relPath))
+	relPath := strings.TrimPrefix(c.Param("filepath"), "/")
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+	if strings.Contains(relPath, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+		return
+	}
+	log.Printf("Requested subtitle for: %s", relPath)
 
-// 	if strings.Contains(relPath, "..") {
-// 		log.Printf("Invalid subtitle path: %s", relPath)
-// 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
-// 		return
-// 	}
-// 	log.Printf("Requested subtitle for path: %s", relPath)
+	// Base video path without .vtt suffix
+	videoRelPath := strings.TrimSuffix(relPath, ".vtt")
 
-// 	// Construct subtitle path in MediaRoot/subtitles, preserving folder structure
-// 	subtitleDir := filepath.Join(config.MediaRoot, "subtitles") //, filepath.Dir(relPath)
-// 	// subtitleFile := strings.TrimSuffix(filepath.Base(relPath), filepath.Ext(relPath)) + ".vtt"
-// 	subtitlePath := filepath.Join(subtitleDir, strings.TrimSuffix(relPath, filepath.Ext(relPath))+".vtt")
+	// List of supported video file extensions to try
+	extensions := []string{".mkv", ".mp4", ".avi", ".mov", ".webm"}
 
-// 	// Full path to the original video
-// 	videoPath := filepath.Join(config.MediaRoot, relPath)
-// 	log.Printf("Looking for subtitle at: %s", subtitlePath)
+	var fileID int64
+	// var videoURL string
+	found := false
 
-// 	// Check if subtitle file exists
-// 	if info, err := os.Stat(subtitlePath); err == nil && !info.IsDir() {
-// 		log.Printf("Serving existing subtitle: %s", subtitlePath)
-// 		c.File(subtitlePath)
-// 		return
-// 	}
+	for _, ext := range extensions {
+		candidatePath := videoRelPath + ext
+		candidateURL := fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, candidatePath)
+		err := db.QueryRow("SELECT id FROM files_table WHERE url = $1", candidateURL).Scan(&fileID)
+		if err == nil {
+			// videoURL = candidateURL
+			videoRelPath = candidatePath
+			found = true
+			break
+		} else if err != sql.ErrNoRows {
+			log.Printf("DB error checking file: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
+			return
+		}
+	}
 
-// 	// Verify video exists in DB
-// 	url := fmt.Sprintf("http://localhost:%v/media_stream?path=%s", config.AppPort, relPath)
-// 	var fileID int64
-// 	err := db.QueryRow("SELECT id FROM files_table WHERE url = ?", url).Scan(&fileID)
-// 	if err != nil {
-// 		if err == sql.ErrNoRows {
-// 			log.Printf("Video not found in database for URL: %s", url)
-// 			c.JSON(http.StatusNotFound, gin.H{"error": "Video not found in database"})
-// 		} else {
-// 			log.Printf("Error querying file %s: %v", url, err)
-// 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not access file"})
-// 		}
-// 		return
-// 	}
+	if !found {
+		log.Printf("Video not found in DB for any suffix: %s", videoRelPath)
+		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
+		return
+	}
 
-// 	// Create subtitles directory if needed
-// 	if err := os.MkdirAll(filepath.Dir(subtitlePath), os.ModePerm); err != nil {
-// 		log.Printf("Error creating subtitles directory %s: %v", subtitleDir, err)
-// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create subtitles directory"})
-// 		return
-// 	}
+	subtitleKey := filepath.ToSlash(filepath.Join("subtitles", relPath))
 
-// 	// Check if video file exists
-// 	if _, err := os.Stat(videoPath); os.IsNotExist(err) {
-// 		log.Printf("Source video file not found: %s", videoPath)
-// 		c.JSON(http.StatusNotFound, gin.H{"error": "Source video file not found"})
-// 		return
-// 	}
+	// Check if subtitle already exists on R2
+	_, err := r2Client.HeadObject(context.TODO(), &s3.HeadObjectInput{
+		Bucket: aws.String(config.CloudflareR2BucketName),
+		Key:    aws.String(subtitleKey),
+	})
+	if err == nil {
+		log.Printf("Subtitle already exists at R2: %s", subtitleKey)
+		c.Redirect(http.StatusFound, "/proxy_subtitle/"+relPath)
+		return
+	}
 
-// 	// Attempt to extract subtitles using FFmpeg
-// 	log.Printf("Generating subtitle for: %s to %s", videoPath, subtitlePath)
-// 	cmd := exec.Command(
-// 		"ffmpeg",
-// 		"-i", videoPath,
-// 		"-map", "0:s:0?",
-// 		"-f", "webvtt",
-// 		subtitlePath,
-// 	)
-// 	cmd.Stderr = os.Stderr // Capture FFmpeg errors
-// 	if err := cmd.Run(); err != nil {
-// 		log.Printf("FFmpeg error generating subtitle for %s: %v", videoPath, err)
-// 		c.JSON(http.StatusNotFound, gin.H{"error": "No subtitles found in video or failed to extract"})
-// 		return
-// 	}
+	// Generate presigned URL for the video file using the discovered videoRelPath
+	presignClient := s3.NewPresignClient(r2Client)
+	presigned, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(config.CloudflareR2BucketName),
+		Key:    aws.String(videoRelPath),
+	}, s3.WithPresignExpires(5*time.Minute))
+	if err != nil {
+		log.Printf("Failed to generate presigned URL: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to access video file"})
+		return
+	}
 
-// 	// Verify subtitle was created
-// 	if _, err := os.Stat(subtitlePath); os.IsNotExist(err) {
-// 		log.Printf("Subtitle file not created: %s", subtitlePath)
-// 		c.JSON(http.StatusNotFound, gin.H{"error": "Failed to generate subtitle"})
-// 		return
-// 	}
+	var subtitleBuf bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := exec.Command("ffmpeg",
+		"-i", presigned.URL,
+		"-map", "0:s:0",
+		"-f", "webvtt",
+		"pipe:1",
+	)
+	cmd.Stdout = &subtitleBuf
+	cmd.Stderr = &stderr
 
-// 	log.Printf("Serving generated subtitle: %s", subtitlePath)
-// 	c.File(subtitlePath)
-// }
+	if err := cmd.Run(); err != nil {
+		log.Printf("FFmpeg error: %v, stderr: %s", err, stderr.String())
+		c.JSON(http.StatusNotFound, gin.H{"error": "No subtitles found or extraction failed"})
+		return
+	}
+
+	uploader := manager.NewUploader(r2Client)
+	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(config.CloudflareR2BucketName),
+		Key:         aws.String(subtitleKey),
+		Body:        bytes.NewReader(subtitleBuf.Bytes()),
+		ContentType: aws.String("text/vtt"),
+	})
+	if err != nil {
+		log.Printf("Error uploading subtitle to R2: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload subtitle"})
+		return
+	}
+
+	log.Printf("Subtitle uploaded to R2: %s", subtitleKey)
+	c.Redirect(http.StatusFound, "/proxy_subtitle/"+relPath)
+}
+
+func ProxySubtitle(c *gin.Context) {
+	relPath := strings.TrimPrefix(c.Param("filepath"), "/")
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+
+	key := filepath.ToSlash(filepath.Join("subtitles", relPath))
+	log.Printf("Proxying subtitle from R2: %s", key)
+
+	resp, err := r2Client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(config.CloudflareR2BucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		log.Printf("Failed to fetch subtitle from R2: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Subtitle not found"})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.Header("Content-Type", "text/vtt")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Status(http.StatusOK)
+	io.Copy(c.Writer, resp.Body)
+}
