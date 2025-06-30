@@ -5,7 +5,7 @@ import (
 	"log"
 	"media-server/config"
 	"media-server/handlers"
-	"media-server/r2" // Import the new r2 package
+	"media-server/r2"
 	"media-server/storage"
 )
 
@@ -20,7 +20,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// Initialize R2 Client
+	// Initialize Cloudflare R2 Client
 	r2Client, err := r2.NewR2Client()
 	if err != nil {
 		log.Fatalf("Error Initializing R2 client: %v", err)
@@ -29,16 +29,21 @@ func main() {
 
 	// Pass database and R2 client to handlers
 	handlers.SetDB(db)
-	handlers.SetR2Client(r2Client) // New function to set the R2 client
+	handlers.SetR2Client(r2Client)
 
-	// Sync files from R2 to database at startup
-	// This replaces the old filesystem walk.
+	// Step 1: Sync files from R2 to DB (inserts any new files)
 	err = storage.SyncFilesWithR2(db, r2Client, config.CloudflareR2BucketName)
 	if err != nil {
 		log.Fatalf("Error Syncing Files from R2: %v", err)
 	}
 
-	// Setup and run the router
+	// Step 2: For already-synced files, generate missing thumbnails/subtitles
+	err = storage.GenerateMissingAssetsForExistingFiles(db, r2Client, config.CloudflareR2BucketName)
+	if err != nil {
+		log.Fatalf("Error Generating Thumbnails/Subtitles: %v", err)
+	}
+
+	// Step 3: Start the HTTP server
 	r := setupRouter()
-	r.Run(fmt.Sprintf(":%v", config.AppPort)) // Listen on all interfaces for container deployment
+	r.Run(fmt.Sprintf(":%v", config.AppPort))
 }

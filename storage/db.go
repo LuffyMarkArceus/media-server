@@ -1,52 +1,59 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"media-server/config"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	_ "github.com/lib/pq" // PostgreSQL driver
+	_ "github.com/lib/pq"
 )
 
-// InitDB remains the same, your updated version is correct for PostgreSQL.
+// InitDB initializes the database and creates tables if not present
 func InitDB(dataSourceName string) (*sql.DB, error) {
-    // ... your existing InitDB code is fine ...
-    // Make sure it returns after creating tables and indexes
 	db, err := sql.Open("postgres", dataSourceName)
-     if err != nil {
-         return nil, fmt.Errorf("failed to open database: %w", err)
-     }
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
 
-     if err = db.Ping(); err != nil {
-         return nil, fmt.Errorf("failed to connect to database: %w", err)
-     }
+	if err = db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
 
-     // Create tables
-     _, err = db.Exec(CreateFoldersTableSQL)
-     if err != nil {
-         return nil, fmt.Errorf("failed to create folders_table: %w", err)
-     }
-     log.Println("Created/Verified Table: folders_table")
+	_, err = db.Exec(CreateFoldersTableSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create folders_table: %w", err)
+	}
+	log.Println("Created/Verified Table: folders_table")
 
-     _, err = db.Exec(CreateFilesTableSQL)
-   	if err != nil {
-         return nil, fmt.Errorf("failed to create files_table: %w", err)
-     }
-   	log.Println("Created/Verified Table: files_table")
+	_, err = db.Exec(CreateFilesTableSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create files_table: %w", err)
+	}
+	log.Println("Created/Verified Table: files_table")
+
 	return db, nil
 }
 
+// StartSyncAndAssetGeneration runs both file sync and asset generation
+func StartSyncAndAssetGeneration(db *sql.DB, r2Client *s3.Client, bucket string) error {
+	if err := SyncFilesWithR2(db, r2Client, bucket); err != nil {
+		return err
+	}
+	return GenerateMissingAssetsForExistingFiles(db, r2Client, bucket)
+}
 
-// SyncFilesWithR2 replaces the old SyncFiles function.
-// It lists all objects in the R2 bucket and syncs them to the database.
+// SyncFilesWithR2 pulls files from R2 and inserts new ones into DB
 func SyncFilesWithR2(db *sql.DB, r2Client *s3.Client, bucketName string) error {
 	rootFolderID, err := ensureRootFolder(db)
 	if err != nil {
@@ -69,26 +76,20 @@ func SyncFilesWithR2(db *sql.DB, r2Client *s3.Client, bucketName string) error {
 		for _, obj := range page.Contents {
 			objectKey := aws.ToString(obj.Key)
 
-			// Skip ignored files/folders
 			if shouldSkip(objectKey) {
 				continue
 			}
-			
-			// The full path is the object key itself
-			relPath := objectKey
 
-			if processedPaths[relPath] {
+			if processedPaths[objectKey] {
 				continue
 			}
 
-            // In R2/S3, folders are just zero-byte objects ending in "/" or implicit.
-            // We will manage folders based on file paths instead of explicit folder objects.
-			_, err = insertFileFromR2(db, relPath, obj, rootFolderID)
+			_, err := insertFileFromR2(db, objectKey, obj, rootFolderID, r2Client, bucketName)
 			if err != nil {
-				log.Printf("Could not insert file %s: %v", relPath, err)
-                continue // Continue with the next file
+				log.Printf("Could not insert file %s: %v", objectKey, err)
+				continue
 			}
-			processedPaths[relPath] = true
+			processedPaths[objectKey] = true
 		}
 	}
 
@@ -96,7 +97,6 @@ func SyncFilesWithR2(db *sql.DB, r2Client *s3.Client, bucketName string) error {
 	return nil
 }
 
-// A helper to decide if a path should be ignored.
 func shouldSkip(path string) bool {
 	parts := strings.Split(path, "/")
 	for _, part := range parts {
@@ -104,24 +104,19 @@ func shouldSkip(path string) bool {
 			return true
 		}
 	}
-	// Add other file extension checks if needed
 	if strings.HasSuffix(path, ".ini") || strings.HasSuffix(path, ".dat") {
 		return true
 	}
 	return false
 }
 
-
-// insertFileFromR2 is the new version of insertFile.
-// It takes an S3 object instead of os.FileInfo.
-func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID int64) (int64, error) {
-	// Construct the public URL for the file
+func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID int64, r2Client *s3.Client, bucket string) (int64, error) {
 	url := fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, relPath)
 
 	var fileID int64
 	err := db.QueryRow("SELECT id FROM files_table WHERE url = $1", url).Scan(&fileID)
 	if err == nil {
-		return fileID, nil // File already exists
+		return fileID, nil
 	}
 	if err != sql.ErrNoRows {
 		return 0, fmt.Errorf("error checking file %s: %w", relPath, err)
@@ -141,51 +136,136 @@ func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID
 	fileType := filepath.Ext(fileName)
 	modTime := aws.ToTime(obj.LastModified)
 
+	var thumbnailURL, subtitleURL *string
+	if isVideoFile(fileType) {
+		thumbnailURL, _ = generateThumbnailAndUpload(r2Client, bucket, relPath)
+		subtitleURL, _ = generateSubtitleAndUpload(r2Client, bucket, relPath)
+	}
+
 	err = db.QueryRow(
-		`INSERT INTO files_table (ownerId, name, size, url, type, parent, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id`,
-		"default_user", fileName, fileSize, url, fileType, parentID, modTime,
+		`INSERT INTO files_table 
+		(ownerId, name, size, url, type, parent, created_at, thumbnail_url, subtitle_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id`,
+		"default_user", fileName, fileSize, url, fileType, parentID, modTime, thumbnailURL, subtitleURL,
 	).Scan(&fileID)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert file %s: %w", relPath, err)
 	}
+
 	log.Printf("Synced file: %s", relPath)
 	return fileID, nil
 }
 
-func ensureRootFolder(db *sql.DB) (int64, error) {
-	var rootID int64
-	err := db.QueryRow("SELECT id FROM folders_table WHERE path = '' AND name = ''").Scan(&rootID)
-	if err == nil {
-		return rootID, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("error checking root folder: %w", err)
-	}
-
-	err = db.QueryRow(
-		`INSERT INTO folders_table (ownerId, name, path, parent, created_at)
-		 VALUES ($1, '', '', NULL, $2)
-		 RETURNING id`,
-		"default_user", time.Now(),
-	).Scan(&rootID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to insert root folder: %w", err)
-	}
-	return rootID, nil
+func isVideoFile(ext string) bool {
+	ext = strings.ToLower(ext)
+	return ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" || ext == ".webm"
 }
 
-func InsertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error) {
-	var folderID int64
-	normalizedPath := filepath.ToSlash(relPath)
-	err := db.QueryRow("SELECT id FROM folders_table WHERE path = $1", normalizedPath).Scan(&folderID)
+func generateThumbnailAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
+	presignClient := s3.NewPresignClient(r2Client)
+	presigned, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(objectKey),
+	}, s3.WithPresignExpires(5*time.Minute))
+	if err != nil {
+		return nil, err
+	}
+
+	thumbnailKey := "thumbnails/" + strings.TrimSuffix(objectKey, filepath.Ext(objectKey)) + ".jpg"
+	var buf bytes.Buffer
+
+	cmd := exec.Command("ffmpeg", "-ss", "00:00:05", "-i", presigned.URL, "-vframes", "1", "-q:v", "2", "-f", "image2", "pipe:1")
+	cmd.Stdout = &buf
+	cmd.Stderr = &bytes.Buffer{}
+	if err := cmd.Run(); err != nil {
+		log.Printf("Thumbnail error: %v", err)
+		return nil, nil
+	}
+
+	uploader := manager.NewUploader(r2Client)
+	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(thumbnailKey),
+		Body:        bytes.NewReader(buf.Bytes()),
+		ContentType: aws.String("image/jpeg"),
+	})
+	if err != nil {
+		return nil, nil
+	}
+
+	url := fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, thumbnailKey)
+	return &url, nil
+}
+
+func generateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
+	presignClient := s3.NewPresignClient(r2Client)
+	presigned, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(objectKey),
+	}, s3.WithPresignExpires(5*time.Minute))
+	if err != nil {
+		return nil, err
+	}
+
+	subtitleKey := "subtitles/" + strings.TrimSuffix(objectKey, filepath.Ext(objectKey)) + ".vtt"
+	var buf bytes.Buffer
+
+	cmd := exec.Command("ffmpeg", "-i", presigned.URL, "-map", "0:s:0?", "-f", "webvtt", "pipe:1")
+	cmd.Stdout = &buf
+	cmd.Stderr = &bytes.Buffer{}
+	if err := cmd.Run(); err != nil {
+		log.Printf("Subtitle error for %s: %v", objectKey, err)
+		return nil, nil
+	}
+
+	uploader := manager.NewUploader(r2Client)
+	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(subtitleKey),
+		Body:        bytes.NewReader(buf.Bytes()),
+		ContentType: aws.String("text/vtt"),
+	})
+	if err != nil {
+		return nil, nil
+	}
+
+	url := fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, subtitleKey)
+	log.Printf("Generated subtitle for %s", subtitleKey)
+	return &url, nil
+}
+
+func ensureRootFolder(db *sql.DB) (int64, error) {
+	var id int64
+	err := db.QueryRow("SELECT id FROM folders_table WHERE path = '' AND name = ''").Scan(&id)
 	if err == nil {
-		return folderID, nil
+		return id, nil
 	}
 	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("error checking folder %s: %w", relPath, err)
+		return 0, err
+	}
+
+	err = db.QueryRow(`
+		INSERT INTO folders_table (ownerId, name, path, parent, created_at)
+		VALUES ('default_user', '', '', NULL, $1)
+		RETURNING id
+	`, time.Now()).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func InsertFolder(db *sql.DB, relPath string, rootID int64) (int64, error) {
+	var id int64
+	relPath = filepath.ToSlash(relPath)
+	err := db.QueryRow("SELECT id FROM folders_table WHERE path = $1", relPath).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
 	}
 
 	name := filepath.Base(relPath)
@@ -194,24 +274,76 @@ func InsertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error)
 		parentPath = ""
 	}
 
-	var parentId int64
+	var parentID int64
 	if parentPath == "" {
-		parentId = rootFolderID
+		parentID = rootID
 	} else {
-		parentId, err = InsertFolder(db, parentPath, rootFolderID)
+		parentID, err = InsertFolder(db, parentPath, rootID)
 		if err != nil {
-			return 0, fmt.Errorf("failed to insert parent folder %s: %w", parentPath, err)
+			return 0, err
 		}
 	}
 
-	err = db.QueryRow(
-		`INSERT INTO folders_table (ownerId, name, path, parent, created_at)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id`,
-		"default_user", name, relPath, parentId, time.Now(),
-	).Scan(&folderID)
+	err = db.QueryRow(`
+		INSERT INTO folders_table (ownerId, name, path, parent, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id
+	`, "default_user", name, relPath, parentID, time.Now()).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("failed to insert folder %s: %w", name, err)
+		return 0, err
 	}
-	return folderID, nil
+	return id, nil
+}
+
+// GenerateMissingAssetsForExistingFiles updates thumbnail/subtitle URLs for DB entries with NULLs.
+func GenerateMissingAssetsForExistingFiles(db *sql.DB, r2Client *s3.Client, bucket string) error {
+	rows, err := db.Query(`
+		SELECT id, url, type, thumbnail_url, subtitle_url
+		FROM files_table
+		WHERE thumbnail_url IS NULL OR subtitle_url IS NULL
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var url, fileType string
+		var tURL, sURL *string
+
+		if err := rows.Scan(&id, &url, &fileType, &tURL, &sURL); err != nil {
+			log.Printf("Scan failed: %v", err)
+			continue
+		}
+
+		if !isVideoFile(fileType) {
+			continue
+		}
+
+		objectKey := strings.TrimPrefix(url, config.CloudflarePublicDevURL+"/")
+
+		if tURL == nil {
+			tURL, _ = generateThumbnailAndUpload(r2Client, bucket, objectKey)
+		}
+		if sURL == nil {
+			sURL, _ = generateSubtitleAndUpload(r2Client, bucket, objectKey)
+		}
+
+		if tURL != nil || sURL != nil {
+			_, err := db.Exec(`
+				UPDATE files_table
+				SET thumbnail_url = COALESCE($1, thumbnail_url),
+				    subtitle_url = COALESCE($2, subtitle_url)
+				WHERE id = $3
+			`, tURL, sURL, id)
+
+			if err != nil {
+				log.Printf("Failed to update file %d: %v", id, err)
+			} else {
+				log.Printf("Updated file ID %d with missing assets", id)
+			}
+		}
+	}
+	return nil
 }

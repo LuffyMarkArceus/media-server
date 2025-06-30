@@ -15,6 +15,8 @@ type File struct {
 	Type      string    `json:"type"`
 	ParentID  int64     `json:"parentId"`
 	CreatedAt time.Time `json:"createdAt"`
+    ThumbnailURL *string   `json:"thumbnailUrl,omitempty"`
+	SubtitleURL  *string   `json:"subtitleUrl,omitempty"`
 }
 
 // Folder represents a row in the folders_table.
@@ -52,6 +54,8 @@ CREATE TABLE IF NOT EXISTS files_table (
     type TEXT NOT NULL,
     parent INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    thumbnail_url TEXT,
+    subtitle_url TEXT,
     CONSTRAINT fk_parent
         FOREIGN KEY (parent)
         REFERENCES folders_table(id)
