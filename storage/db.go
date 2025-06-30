@@ -131,7 +131,7 @@ func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID
 	if parentPath == "." {
 		parentPath = ""
 	}
-	parentID, err := insertFolder(db, parentPath, rootFolderID)
+	parentID, err := InsertFolder(db, parentPath, rootFolderID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert parent folder %s: %w", parentPath, err)
 	}
@@ -177,7 +177,7 @@ func ensureRootFolder(db *sql.DB) (int64, error) {
 	return rootID, nil
 }
 
-func insertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error) {
+func InsertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error) {
 	var folderID int64
 	normalizedPath := filepath.ToSlash(relPath)
 	err := db.QueryRow("SELECT id FROM folders_table WHERE path = $1", normalizedPath).Scan(&folderID)
@@ -198,7 +198,7 @@ func insertFolder(db *sql.DB, relPath string, rootFolderID int64) (int64, error)
 	if parentPath == "" {
 		parentId = rootFolderID
 	} else {
-		parentId, err = insertFolder(db, parentPath, rootFolderID)
+		parentId, err = InsertFolder(db, parentPath, rootFolderID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to insert parent folder %s: %w", parentPath, err)
 		}

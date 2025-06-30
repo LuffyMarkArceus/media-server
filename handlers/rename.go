@@ -1,14 +1,16 @@
-// handlers/rename.go (R2 version)
 package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"media-server/config"
 	"net/http"
 	"path/filepath"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,8 +19,8 @@ type RenameRequest struct {
 }
 
 func RenameFile(c *gin.Context) {
-	if db == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database not initialized"})
+	if db == nil || r2Client == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Service not initialized"})
 		return
 	}
 
@@ -27,44 +29,62 @@ func RenameFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
 		return
 	}
+	oldKey := relPath
+	oldURL := config.CloudflarePublicDevURL + "/" + oldKey
 
-	// Full current URL in R2
-	oldURL := config.CloudflarePublicDevURL + "/" + relPath
-
-	// Get file entry
+	// Find file in DB
 	var fileID int64
 	var ext string
 	err := db.QueryRow("SELECT id, type FROM files_table WHERE url = $1", oldURL).Scan(&fileID, &ext)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			c.JSON(http.StatusNotFound, gin.H{"error": "File not found in database"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "File not found in DB"})
 		} else {
-			log.Printf("DB query error for %s: %v", oldURL, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query database"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB query error"})
 		}
 		return
 	}
 
-	// Validate request body
+	// Parse new name
 	var req RenameRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.NewName) == "" || strings.ContainsAny(req.NewName, "/\\:") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid new name"})
 		return
 	}
-
-	dir := filepath.Dir(relPath)
 	newBase := req.NewName + ext
-	newRelPath := filepath.ToSlash(filepath.Join(dir, newBase))
-	newURL := config.CloudflarePublicDevURL + "/" + newRelPath
+	dir := filepath.Dir(oldKey)
+	newKey := filepath.ToSlash(filepath.Join(dir, newBase))
+	newURL := config.CloudflarePublicDevURL + "/" + newKey
 
-	// Check conflicts
+	// Check conflict
 	var conflictID int64
 	err = db.QueryRow("SELECT id FROM files_table WHERE url = $1", newURL).Scan(&conflictID)
 	if err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "A file with the new name already exists"})
+		c.JSON(http.StatusConflict, gin.H{"error": "A file with that name already exists"})
 		return
 	} else if err != sql.ErrNoRows {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error checking for existing file"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Conflict check failed"})
+		return
+	}
+
+	// Perform R2 Rename (Copy + Delete)
+	_, err = r2Client.CopyObject(c, &s3.CopyObjectInput{
+		Bucket:     aws.String(config.CloudflareR2BucketName),
+		CopySource: aws.String(fmt.Sprintf("%s/%s", config.CloudflareR2BucketName, oldKey)),
+		Key:        aws.String(newKey),
+	})
+	if err != nil {
+		log.Printf("Failed to copy R2 object: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to copy in R2"})
+		return
+	}
+	_, err = r2Client.DeleteObject(c, &s3.DeleteObjectInput{
+		Bucket: aws.String(config.CloudflareR2BucketName),
+		Key:    aws.String(oldKey),
+	})
+	if err != nil {
+		log.Printf("Failed to delete old R2 object: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete old object"})
 		return
 	}
 
@@ -72,15 +92,13 @@ func RenameFile(c *gin.Context) {
 	_, err = db.Exec("UPDATE files_table SET name = $1, url = $2 WHERE id = $3", newBase, newURL, fileID)
 	if err != nil {
 		log.Printf("Failed to update DB: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update database"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "DB update failed"})
 		return
 	}
 
-	// Note: If needed, move the object in R2 bucket via `CopyObject` + `DeleteObject`
-
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "renamed",
-		"oldPath": relPath,
-		"newPath": newRelPath,
+		"oldPath": oldKey,
+		"newPath": newKey,
 	})
 }
