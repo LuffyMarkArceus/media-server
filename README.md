@@ -32,6 +32,16 @@ brew install ffmpeg
 go run main.go
 ```
 
+#### For dockerized builds:
+
+```bash
+docker build -t <your_dockerhub_username>/media-server:latest .
+docker run -p 8080:8080 <your_dockerhub_username>/media-server:latest
+
+# docker logs <container_id>
+# docker stop <container_id>
+```
+
 ### Backend Tasks - Gin Go Server
 
 - [x] Set up Gin project.
