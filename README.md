@@ -53,21 +53,19 @@ docker run -p 8080:8080 <your_dockerhub_username>/media-server:latest
 - [x] Modify DB Schema for media files & folders
 - [x] Config file support, .env (e.g., media root path, port).
 - [x] Use SQLite or other persistent DB instead of in-memory map.
+- [x] Rename media route.
 
 - [ ] Delete media route.
-- [x] Rename media route.
-- [ ] Upload media route.
+- [x] Upload media route.
 
 - [ ] Add logging middleware or structured logs.
 - [ ] Add unit tests for handlers.
 - [ ] Add JWT-based authentication.
 - [ ] Pagination support for /media.
 - [ ] API documentation (Swagger or Postman collection).
-- [ ] Dockerize the app.
+- [x] Dockerize the app.
 
 ### BONUS Ideas
 
 - [ ] Return video duration from ffprobe or ffmpeg during upload/scan.
-- [ ]
-- [ ] Use Range header support with c.FileFromFS() or http.ServeContent for efficient streaming.
-- [-] Add /healthz and /metrics endpoints for monitoring.
+- [x] Add /health endpoint for monitoring.

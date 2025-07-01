@@ -55,7 +55,7 @@ func StartSyncAndAssetGeneration(db *sql.DB, r2Client *s3.Client, bucket string)
 
 // SyncFilesWithR2 pulls files from R2 and inserts new ones into DB
 func SyncFilesWithR2(db *sql.DB, r2Client *s3.Client, bucketName string) error {
-	rootFolderID, err := ensureRootFolder(db)
+	rootFolderID, err := EnsureRootFolder(db)
 	if err != nil {
 		return fmt.Errorf("failed to ensure root folder: %w", err)
 	}
@@ -137,9 +137,9 @@ func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID
 	modTime := aws.ToTime(obj.LastModified)
 
 	var thumbnailURL, subtitleURL *string
-	if isVideoFile(fileType) {
-		thumbnailURL, _ = generateThumbnailAndUpload(r2Client, bucket, relPath)
-		subtitleURL, _ = generateSubtitleAndUpload(r2Client, bucket, relPath)
+	if IsVideoFile(fileType) {
+		thumbnailURL, _ = GenerateThumbnailAndUpload(r2Client, bucket, relPath)
+		subtitleURL, _ = GenerateSubtitleAndUpload(r2Client, bucket, relPath)
 	}
 
 	err = db.QueryRow(
@@ -158,12 +158,12 @@ func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID
 	return fileID, nil
 }
 
-func isVideoFile(ext string) bool {
+func IsVideoFile(ext string) bool {
 	ext = strings.ToLower(ext)
 	return ext == ".mp4" || ext == ".mkv" || ext == ".avi" || ext == ".mov" || ext == ".webm"
 }
 
-func generateThumbnailAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
+func GenerateThumbnailAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
 	presignClient := s3.NewPresignClient(r2Client)
 	presigned, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -199,7 +199,7 @@ func generateThumbnailAndUpload(r2Client *s3.Client, bucket, objectKey string) (
 	return &url, nil
 }
 
-func generateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
+func GenerateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
 	presignClient := s3.NewPresignClient(r2Client)
 	presigned, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -236,7 +236,7 @@ func generateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*
 	return &url, nil
 }
 
-func ensureRootFolder(db *sql.DB) (int64, error) {
+func EnsureRootFolder(db *sql.DB) (int64, error) {
 	var id int64
 	err := db.QueryRow("SELECT id FROM folders_table WHERE path = '' AND name = ''").Scan(&id)
 	if err == nil {
@@ -317,17 +317,17 @@ func GenerateMissingAssetsForExistingFiles(db *sql.DB, r2Client *s3.Client, buck
 			continue
 		}
 
-		if !isVideoFile(fileType) {
+		if !IsVideoFile(fileType) {
 			continue
 		}
 
 		objectKey := strings.TrimPrefix(url, config.CloudflarePublicDevURL+"/")
 
 		if tURL == nil {
-			tURL, _ = generateThumbnailAndUpload(r2Client, bucket, objectKey)
+			tURL, _ = GenerateThumbnailAndUpload(r2Client, bucket, objectKey)
 		}
 		if sURL == nil {
-			sURL, _ = generateSubtitleAndUpload(r2Client, bucket, objectKey)
+			sURL, _ = GenerateSubtitleAndUpload(r2Client, bucket, objectKey)
 		}
 
 		if tURL != nil || sURL != nil {

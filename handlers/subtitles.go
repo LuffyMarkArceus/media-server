@@ -21,7 +21,7 @@ import (
 )
 
 // DB stores full URLs with domain in the `url` column
-const dbHasFullURLs = true
+// const dbHasFullURLs = true
 
 func GetSubtitles(c *gin.Context) {
 	if db == nil || r2Client == nil {
