@@ -137,17 +137,18 @@ func insertFileFromR2(db *sql.DB, relPath string, obj types.Object, rootFolderID
 	modTime := aws.ToTime(obj.LastModified)
 
 	var thumbnailURL, subtitleURL *string
+	var subtitleGenFailed bool
 	if IsVideoFile(fileType) {
 		thumbnailURL, _ = GenerateThumbnailAndUpload(r2Client, bucket, relPath)
-		subtitleURL, _ = GenerateSubtitleAndUpload(r2Client, bucket, relPath)
+		subtitleURL, subtitleGenFailed, _ = GenerateSubtitleAndUpload(r2Client, bucket, relPath)
 	}
 
 	err = db.QueryRow(
 		`INSERT INTO files_table 
-		(ownerId, name, size, url, type, parent, created_at, thumbnail_url, subtitle_url)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		(ownerId, name, size, url, type, parent, created_at, thumbnail_url, subtitle_url, subtitle_gen_failed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id`,
-		"default_user", fileName, fileSize, url, fileType, parentID, modTime, thumbnailURL, subtitleURL,
+		"default_user", fileName, fileSize, url, fileType, parentID, modTime, thumbnailURL, subtitleURL, subtitleGenFailed, 
 	).Scan(&fileID)
 
 	if err != nil {
@@ -199,14 +200,14 @@ func GenerateThumbnailAndUpload(r2Client *s3.Client, bucket, objectKey string) (
 	return &url, nil
 }
 
-func GenerateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, error) {
+func GenerateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*string, bool, error) {
 	presignClient := s3.NewPresignClient(r2Client)
 	presigned, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(objectKey),
 	}, s3.WithPresignExpires(5*time.Minute))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	subtitleKey := "subtitles/" + strings.TrimSuffix(objectKey, filepath.Ext(objectKey)) + ".vtt"
@@ -217,7 +218,7 @@ func GenerateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*
 	cmd.Stderr = &bytes.Buffer{}
 	if err := cmd.Run(); err != nil {
 		log.Printf("Subtitle error for %s: %v", objectKey, err)
-		return nil, nil
+		return nil, true, nil
 	}
 
 	uploader := manager.NewUploader(r2Client)
@@ -228,12 +229,12 @@ func GenerateSubtitleAndUpload(r2Client *s3.Client, bucket, objectKey string) (*
 		ContentType: aws.String("text/vtt"),
 	})
 	if err != nil {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	url := fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, subtitleKey)
 	log.Printf("Generated subtitle for %s", subtitleKey)
-	return &url, nil
+	return &url, false, nil
 }
 
 func EnsureRootFolder(db *sql.DB) (int64, error) {
@@ -300,7 +301,7 @@ func GenerateMissingAssetsForExistingFiles(db *sql.DB, r2Client *s3.Client, buck
 	rows, err := db.Query(`
 		SELECT id, url, type, thumbnail_url, subtitle_url
 		FROM files_table
-		WHERE thumbnail_url IS NULL OR subtitle_url IS NULL
+		WHERE (thumbnail_url IS NULL OR subtitle_url IS NULL) AND subtitle_gen_failed = FALSE
 	`)
 	if err != nil {
 		return err
@@ -326,17 +327,19 @@ func GenerateMissingAssetsForExistingFiles(db *sql.DB, r2Client *s3.Client, buck
 		if tURL == nil {
 			tURL, _ = GenerateThumbnailAndUpload(r2Client, bucket, objectKey)
 		}
+		var subtitleGenFailed bool
 		if sURL == nil {
-			sURL, _ = GenerateSubtitleAndUpload(r2Client, bucket, objectKey)
+			sURL, subtitleGenFailed, _ = GenerateSubtitleAndUpload(r2Client, bucket, objectKey)
 		}
 
-		if tURL != nil || sURL != nil {
+		if tURL != nil || sURL != nil || subtitleGenFailed {
 			_, err := db.Exec(`
 				UPDATE files_table
 				SET thumbnail_url = COALESCE($1, thumbnail_url),
-				    subtitle_url = COALESCE($2, subtitle_url)
-				WHERE id = $3
-			`, tURL, sURL, id)
+				    subtitle_url = COALESCE($2, subtitle_url),
+					subtitle_gen_failed = $3
+				WHERE id = $4
+			`, tURL, sURL, subtitleGenFailed, id)
 
 			if err != nil {
 				log.Printf("Failed to update file %d: %v", id, err)

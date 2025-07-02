@@ -44,19 +44,19 @@ func GetSubtitles(c *gin.Context) {
 	extensions := []string{".mkv", ".mp4", ".avi", ".mov", ".webm"}
 
 	var fileID int64
+	var subtitleGenFailed bool
 	// var videoURL string
 	found := false
 
 	for _, ext := range extensions {
 		candidatePath := videoRelPath + ext
 		candidateURL := fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, candidatePath)
-		err := db.QueryRow("SELECT id FROM files_table WHERE url = $1", candidateURL).Scan(&fileID)
-		if err == nil {
-			// videoURL = candidateURL
-			videoRelPath = candidatePath
-			found = true
-			break
-		} else if err != sql.ErrNoRows {
+		err := db.QueryRow("SELECT id, subtitle_gen_failed FROM files_table WHERE url = $1", candidateURL).Scan(&fileID, &subtitleGenFailed)
+        if err == nil {
+            videoRelPath = candidatePath
+            found = true
+            break
+        } else if err != sql.ErrNoRows {
 			log.Printf("DB error checking file: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "DB error"})
 			return
@@ -67,6 +67,13 @@ func GetSubtitles(c *gin.Context) {
 		log.Printf("Video not found in DB for any suffix: %s", videoRelPath)
 		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 		return
+	}
+
+	if found && subtitleGenFailed {
+		log.Printf("Skipping subtitle generation for %s as it's known to fail.", videoRelPath)
+        c.JSON(http.StatusNotFound, gin.H{"error": "Subtitles are not available for this video."})
+        return
+
 	}
 
 	subtitleKey := filepath.ToSlash(filepath.Join("subtitles", relPath))
@@ -105,8 +112,17 @@ func GetSubtitles(c *gin.Context) {
 	cmd.Stdout = &subtitleBuf
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Run(); err != nil  || subtitleBuf.Len() == 0 {
 		log.Printf("FFmpeg error: %v, stderr: %s", err, stderr.String())
+		
+		// Flag the failure in the database 
+		if found {
+			_, dbErr := db.Exec("UPDATE files_table SET subtitle_gen_failed = TRUE WHERE id = $1", fileID)
+            if dbErr != nil {
+                log.Printf("Failed to mark subtitle generation as failed for file ID %d: %v", fileID, dbErr)
+            }
+		}
+
 		c.JSON(http.StatusNotFound, gin.H{"error": "No subtitles found or extraction failed"})
 		return
 	}
