@@ -24,6 +24,7 @@ func RenameFile(c *gin.Context) {
 		return
 	}
 
+	// Get and sanitize path
 	relPath := filepath.ToSlash(filepath.Clean(c.Query("path")))
 	if relPath == "" || strings.Contains(relPath, "..") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
@@ -32,7 +33,7 @@ func RenameFile(c *gin.Context) {
 	oldKey := relPath
 	oldURL := config.CloudflarePublicDevURL + "/" + oldKey
 
-	// Find file in DB
+	// Get file from DB
 	var fileID int64
 	var ext string
 	err := db.QueryRow("SELECT id, type FROM files_table WHERE url = $1", oldURL).Scan(&fileID, &ext)
@@ -51,12 +52,13 @@ func RenameFile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid new name"})
 		return
 	}
+
 	newBase := req.NewName + ext
 	dir := filepath.Dir(oldKey)
 	newKey := filepath.ToSlash(filepath.Join(dir, newBase))
 	newURL := config.CloudflarePublicDevURL + "/" + newKey
 
-	// Check conflict
+	// Check if file with same name exists
 	var conflictID int64
 	err = db.QueryRow("SELECT id FROM files_table WHERE url = $1", newURL).Scan(&conflictID)
 	if err == nil {
@@ -67,31 +69,32 @@ func RenameFile(c *gin.Context) {
 		return
 	}
 
-	// Perform R2 Rename (Copy + Delete)
+	// R2 rename via Copy + Delete
 	_, err = r2Client.CopyObject(c, &s3.CopyObjectInput{
 		Bucket:     aws.String(config.CloudflareR2BucketName),
 		CopySource: aws.String(fmt.Sprintf("%s/%s", config.CloudflareR2BucketName, oldKey)),
 		Key:        aws.String(newKey),
 	})
 	if err != nil {
-		log.Printf("Failed to copy R2 object: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to copy in R2"})
+		log.Printf("R2 copy failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "R2 copy failed"})
 		return
 	}
+
 	_, err = r2Client.DeleteObject(c, &s3.DeleteObjectInput{
 		Bucket: aws.String(config.CloudflareR2BucketName),
 		Key:    aws.String(oldKey),
 	})
 	if err != nil {
-		log.Printf("Failed to delete old R2 object: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete old object"})
+		log.Printf("R2 delete failed: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "R2 delete failed"})
 		return
 	}
 
-	// Update DB
+	// DB update
 	_, err = db.Exec("UPDATE files_table SET name = $1, url = $2 WHERE id = $3", newBase, newURL, fileID)
 	if err != nil {
-		log.Printf("Failed to update DB: %v", err)
+		log.Printf("DB update failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "DB update failed"})
 		return
 	}

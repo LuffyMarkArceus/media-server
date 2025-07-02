@@ -37,7 +37,7 @@ func setupRouter() *gin.Engine {
 	r.GET("/health", handlers.Health)
 
 	r.POST("/upload", handlers.UploadFiles)
-	// r.PUT("/rename", handlers.RenameFile)
+	r.PUT("/rename", handlers.RenameFile)
 
 	return r
 }
