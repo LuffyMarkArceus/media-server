@@ -64,6 +64,7 @@ docker run -p 8080:8080 <your_dockerhub_username>/media-server:latest
 - [ ] Pagination support for /media.
 - [ ] API documentation (Swagger or Postman collection).
 - [x] Dockerize the app.
+- [x] Deploy to Google Cloud Run.
 
 ### BONUS Ideas
 
