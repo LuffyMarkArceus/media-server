@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"media-server/config"
 	"net/http"
@@ -43,7 +44,7 @@ func GetThumbnail(c *gin.Context) {
 		Key:    aws.String(thumbnailKey),
 	})
 	if err == nil {
-		c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, thumbnailKey))
+		c.Redirect(http.StatusFound, "/proxy_thumbnail/"+relPath)
 		return
 	}
 
@@ -122,4 +123,28 @@ func GetThumbnail(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusTemporaryRedirect, fmt.Sprintf("%s/%s", config.CloudflarePublicDevURL, thumbnailKey))
+}
+
+func ProxyThumbnail(c *gin.Context) {
+	relPath := strings.TrimPrefix(c.Param("filepath"), "/")
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+
+	key := filepath.ToSlash(filepath.Join("thumbnails", relPath))
+	log.Printf("Proxying thumbnail from R2: %s", key)
+
+	resp, err := r2Client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(config.CloudflareR2BucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		log.Printf("Failed to fetch thumbnail from R2: %v", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "thumbnail not found"})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.Header("Content-Type", "image/jpeg")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Status(http.StatusOK)
+	io.Copy(c.Writer, resp.Body)
 }
