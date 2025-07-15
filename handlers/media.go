@@ -76,22 +76,26 @@ func ListMedia(c *gin.Context) {
 
 	// Query Files (use $1)
 	files := []gin.H{}
-	rows, err = db.Query("SELECT name, size, url, type, created_at FROM files_table WHERE parent = $1", folderID)
-    // ... (rest of file query logic)
-	if err != nil {
-		log.Printf("Error querying files for folder %d: %v", folderID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query files"})
-		return
-	}
-	defer rows.Close()
+	rows, err = db.Query(`
+        SELECT name, size, url, type, created_at, thumbnail_url, subtitle_url 
+        FROM files_table WHERE parent = $1
+    `, folderID)
+    if err != nil {
+        log.Printf("Error querying files for folder %d: %v", folderID, err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query files"})
+        return
+    }
+    defer rows.Close()
+
 	for rows.Next() {
 		var name, url, typ string
 		var size int64 // Use int64 for BIGINT
 		var createdAt time.Time
-		if err := rows.Scan(&name, &size, &url, &typ, &createdAt); err != nil {
-			log.Printf("Error Scanning file %s : %v", name, err)
-			continue
-		}
+		var thumbnailURL, subtitleURL sql.NullString
+		if err := rows.Scan(&name, &size, &url, &typ, &createdAt, &thumbnailURL, &subtitleURL); err != nil {
+            log.Printf("Error Scanning file %s : %v", name, err)
+            continue
+        }
         // The path is now derived by trimming the public R2 URL
 		path := strings.TrimPrefix(url, config.CloudflarePublicDevURL+"/")
 		files = append(files, gin.H{
@@ -99,7 +103,10 @@ func ListMedia(c *gin.Context) {
 			"size":       size,
 			"path":       path, // This is the object key, used for other API calls
 			"type":       typ,
+			"url" :       url,
 			"created_at": createdAt,
+			"thumbnail_url": thumbnailURL.String, // Will be "" if NULL
+            "subtitle_url":  subtitleURL.String,  // Will be "" if NULL
 		})
 	}
 	// ... (error checking on rows.Err() is the same)

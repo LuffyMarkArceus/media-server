@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS folders_table (
     path TEXT NOT NULL UNIQUE,
     parent INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    subtitle_gen_failed BOOLEAN NOT NULL DEFAULT FALSE,
+    -- subtitle_gen_failed BOOLEAN NOT NULL DEFAULT FALSE,  // <-- REMOVE FROM HERE
     CONSTRAINT fk_parent_folder
         FOREIGN KEY (parent)
         REFERENCES folders_table(id)
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS files_table (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     thumbnail_url TEXT,
     subtitle_url TEXT,
+    subtitle_gen_failed BOOLEAN NOT NULL DEFAULT FALSE, --  <-- ADD IT HERE
     CONSTRAINT fk_parent
         FOREIGN KEY (parent)
         REFERENCES folders_table(id)
